@@ -1,0 +1,59 @@
+name: Build GKI 5.10 with IPv6 NAT
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: 拉取内核源码
+        uses: actions/checkout@v4
+        with:
+          repository: Star-ZER0/android_gki_kernel_5.10_common
+          ref: android12-5.10-2026-04_r1
+          fetch-depth: 1
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bc bison flex libssl-dev libelf-dev lz4 zip cpio
+
+      - name: 下载 clang r416183b
+        run: |
+          git clone --depth 1 -b lineage-20.0 \
+            https://github.com/LineageOS/android_prebuilts_clang_kernel_linux-x86_clang-r416183b \
+            "$HOME/clang"
+          "$HOME/clang/bin/clang" --version | head -2
+
+      - name: 打开 IPv6 NAT 配置
+        run: |
+          echo "CONFIG_IP6_NF_NAT=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_IP6_NF_TARGET_MASQUERADE=y" >> arch/arm64/configs/gki_defconfig
+          echo "--- 追加结果 ---"
+          grep -nE "IP6_NF" arch/arm64/configs/gki_defconfig | tail -6
+
+      - name: 编译内核
+        run: |
+          export PATH="$HOME/clang/bin:$PATH"
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+          make -j$(nproc) ARCH=arm64 LLVM=1 LLVM_IAS=1 Image
+
+      - name: 校验产物
+        run: |
+          echo "--- 最终配置 ---"
+          grep -E "CONFIG_IP6_NF_NAT|CONFIG_IP6_NF_TARGET_MASQUERADE" .config
+          echo "--- 内核版本 ---"
+          make -s ARCH=arm64 LLVM=1 kernelrelease 2>/dev/null || true
+          echo "--- 产物 ---"
+          ls -lh arch/arm64/boot/Image
+
+      - name: 上传 Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-ipv6nat
+          path: arch/arm64/boot/Image
+          retention-days: 7
